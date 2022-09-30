@@ -1,0 +1,23 @@
+click
+good
+imageio<=2.4.1
+matplotlib
+moviepy<1.0.0
+numpy
+opencv-python
+pims
+pyquaternion
+pyyaml
+recordclass
+scikit-image
+scikit-learn
+scipy
+sortednp
+transforms3d
+
+# for windows if you get a GLUT error in render.py
+# download .whl for your python from here
+# http://www.lfd.uci.edu/~gohlke/pythonlibs/#pyopengl
+# and install it
+# python -m pip install PyOpenGL-3.1.6-cp${YOUR_PYTHON_VERSION}-win_amd64.whl --force-reinstall
+PyOpenGL
