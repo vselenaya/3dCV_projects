@@ -92,8 +92,8 @@ def _build_impl(frame_sequence: pims.FramesSequence,
     """
 
     MAX_CORNERS = 5000  # максимальное количество уголков на изображении
-    MIN_DISTANCE = 5  # минимальное расстояние в пикселях между уголками, которые ищем
-    QUALITY_LEVEL = 0.1  # качество уголков - чем меньше, тем больше уголков найдём, но хуже качество будет
+    MIN_DISTANCE = 10  # минимальное расстояние в пикселях между уголками, которые ищем
+    QUALITY_LEVEL = 0.15  # качество уголков - чем меньше, тем больше уголков найдём, но хуже качество будет
     BLOCK_SIZE = 7
     DRAW_SIZE = 4 * MIN_DISTANCE  # радиус для рисования уголка
 
@@ -117,7 +117,9 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         corners = np.array([[[1, 1]]])
     n = len(corners)
     ids = np.arange(n)  # индексы расставим так
-    prev_max_ids = ids.max()  # зафиксируем максимальный инлекс, который сейчас есть у уголков
+    prev_max_ids = ids.max()  # зафиксируем максимальный индекс, который сейчас есть у уголков (просто максимальный
+    # индекс, котрый использовался для нумерации уголков)
+
     frame_corners = FrameCorners(ids=ids,
                                  points=corners,
                                  sizes=np.full(n, DRAW_SIZE))
@@ -153,7 +155,11 @@ def _build_impl(frame_sequence: pims.FramesSequence,
                 # были другие id, чем у старых:
                 ids = np.concatenate([ids, np.arange(prev_max_ids + 1, n - len(ids) + prev_max_ids + 1)])
 
-        prev_max_ids = ids.max()  # обновляем максимум
+        prev_max_ids = max(prev_max_ids, ids.max())  # обновляем максимум (берём максимум от старого максимума и
+        # текущего максимального индекса, так как если новых уголков не задетектилось, то максимальный использованный
+        # индекс должен остаться прежним, а вот текущий максимум может уменьшиться (если какие-то треки со старыми
+        # уголками прервались) - и тогда если написать просто prev_max_ids = ids.max(), то это уменьшит максимум, что
+        # плохо, ведь новые уголки потом будем обозначать старыми индексами уже исчезнувших с экрана уголков)
         frame_corners = FrameCorners(
             ids=ids,
             points=corners,
