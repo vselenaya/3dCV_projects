@@ -80,18 +80,23 @@ def compute_reprojection_errors(points3d, points2d, proj_mat, camera_view):
     return np.sqrt((points2d[:, 0] - get2d[:, 0]) ** 2 + (points2d[:, 1] - get2d[:, 1]) ** 2)
 
 
-def choose_best_next_frame(left_lim_1, right_lim_1, left_lim_2, right_lim_2, corner_storage, corners_id_for_3d_points):
+def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
+                                         found_3d_points, corners_id_for_3d_points,
+                                         intrinsic_mat, corner_storage, REPROJECTION_ERROR):
     """
     Эта функция выбирает кадр, для которого следующим искать положение камеры в нем.
 
-    Выбирать мы будем кадр с наибольшим количеством 2d-3d соответствий - то есть уголков в этом кадре, для которых
-    уже найдены 3d точки (которые в эти уголки проецируются (как мы помним, и для уголков, и для 3d точек у нас есть
-    id, которые однозначно их характеризуют - те можем понять, какие уголки каким 3d точкам соответствуют)
-
-    Выбирать будем только среди кадров, соседних с теми, для которых уже нашли позицию камеры (ведь так больше
+    Для этого мы будем кадр только среди кадров, соседних с теми, для которых уже нашли позицию камеры (ведь так больше
     шансов найти кадр с наибольши количество 2d-3d соответствий) - как мы уже говорили,
     у нас две области номеров таких кадров: [left_lim_1 ... right_lim_1] и [left_lim_2 ... right_lim_2] -
-    - так что, соседние с ними кадры и перебираем
+    - так что, соседние с ними кадры и перебираем.
+
+    А далее для каждого такого кадра решаем задачу pnp - и как только она решится, мы считаем, что нашли подходящий
+    кадр - его и выдаем, а заодно границы областей, для которых нашли позицию камеры, а также возвращаем результат
+    pnp - параметры позиции камеры и число инлайеров - точек, по которым посчитана pnp
+
+    Изначально мы пытаемся решить pnp с маленькой ошибкой, но если ни на одном из рассматриваемых кадрах это не
+    получается сделать, то увеличиваем её...
     """
     interesting_frames = []  # номера кадров, которые можно сейчас рассмотреть - это соседние кадры с кадрами, для
     # которых уже известны положения камеры (так больше шансов найти 2d-2в соответствия)
@@ -105,19 +110,56 @@ def choose_best_next_frame(left_lim_1, right_lim_1, left_lim_2, right_lim_2, cor
     if right_lim_1 == left_lim_2 - 2:
         interesting_frames.append(right_lim_1 + 1)
 
-    max_common_id = 0  # максимальное количество 2d-3d соответствий (то есть уголков (2d точек) на интересующем
-    # нас кадре, для которых уже найдены 3d точки
-    best_frame = -1  # номер кадра с этим лучшим 2d-3d соответствием
-    for intr_frame in interesting_frames:
-        num_3d_2d = len(np.intersect1d(corner_storage[intr_frame].ids, corners_id_for_3d_points))
-        if num_3d_2d > max_common_id:
-            max_common_id = num_3d_2d
-            best_frame = intr_frame
-    assert (max_common_id > 3)  # проверяем, что вообще нашелся кадр с достаточным количество 2d-3d соответствий
+    print("Текущее облако точек имеет размер = ", len(corners_id_for_3d_points), ",")
+    print("Рассматриваем кадры с номерами: ", interesting_frames, ",")
+
+    best_frame = -1  # лучший кадр, который и ищем
+    res = False  # пока что pnp не решили
+    break_from_while = False  # пока из while выходить не нужно
+    curr_coeff_reproj_er = 1  # именно на этот коэффициент домножаем ошибку репроекции
+    while True:
+        if break_from_while: break
+        for intr_frame in interesting_frames:
+            corners_in_frame = corner_storage[intr_frame]  # взяли уголки с выбранного кадра
+
+            print("Обрабатываем кадр номер", intr_frame, "...")
+            print("                 попытка решить pnp c ошибкой репроекции = ", REPROJECTION_ERROR * curr_coeff_reproj_er)
+
+            # в следующих 4 строчках получаем 3d и 2d точки, соответствующие друг другу:
+            # (по аналогии с тем, что уже делали в триангуляции)
+            mask_common_ids_3d_in_frame = np.in1d(corners_id_for_3d_points, corners_in_frame.ids)
+            mask_common_ids_frame_in_3d = np.in1d(corners_in_frame.ids, corners_id_for_3d_points)
+            points3d_for_frame = found_3d_points[mask_common_ids_3d_in_frame]
+            points2d_for_frame = corners_in_frame.points[mask_common_ids_frame_in_3d]
+            if not len(points2d_for_frame) >= 4:  # если не нашли хотя бы 4 точки, то pnp точно не решить - идем дальше
+                continue
+            assert (len(points2d_for_frame) == len(points3d_for_frame))
+
+            res, rvec, tvec, inliers = cv2.solvePnPRansac(objectPoints=points3d_for_frame,
+                                                          imagePoints=points2d_for_frame,
+                                                          cameraMatrix=intrinsic_mat,
+                                                          reprojectionError=REPROJECTION_ERROR * curr_coeff_reproj_er,
+                                                          distCoeffs=0)  # решаем pnp
+            if res:  # если решили:
+                best_frame = intr_frame
+                break_from_while = True
+                break
+
+        if curr_coeff_reproj_er > 10:  # если коэффициент уже очень большой, то выходим - что-то не так с видео
+            break
+
+        if not res:  # если за весь цикл for не решили, значит нужно увеличить коэффициент
+            curr_coeff_reproj_er += 0.5
+            print("ВНИМАНИЕ: pnp на базовой ошибке репроекции = ", REPROJECTION_ERROR,
+                  " не решилась ни для какого кадра...")
+            print("          Увеличили ошибку репроекции в ", curr_coeff_reproj_er, "раз и повторили попытку...")
+
+    if not res:  # если из while вышли, но не решили pnp - выводим ошибку
+        raise NameError("Не удалось решить pnp - вдимо, странное видео")
 
     new_left_lim_1, new_right_lim_1, new_left_lim_2, new_right_lim_2 =\
         left_lim_1, right_lim_1, left_lim_2, right_lim_2
-    if best_frame == left_lim_1 - 1:  # двигаем нужную границу
+    if best_frame == left_lim_1 - 1:  # двигаем нужную границу найденных позиций камеры
         new_left_lim_1 = best_frame
     elif best_frame == right_lim_1 + 1:
         new_right_lim_1 = best_frame
@@ -125,7 +167,7 @@ def choose_best_next_frame(left_lim_1, right_lim_1, left_lim_2, right_lim_2, cor
         new_left_lim_2 = best_frame
     elif best_frame == right_lim_2 + 1:
         new_right_lim_2 = best_frame
-    return best_frame, new_left_lim_1, new_right_lim_1, new_left_lim_2, new_right_lim_2
+    return best_frame, new_left_lim_1, new_right_lim_1, new_left_lim_2, new_right_lim_2, rvec, tvec, inliers
 
 
 def best_frame_for_triangl(new_frame, corner_storage, frame_with_found_cam):
@@ -199,7 +241,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
     Для начала - ТРИАНГУЛЯЦИЯ, то есть ищем трехмерные точки, которые соответствуют 2d-точкам на двух
     кадрах с уже известными позиция камеры
     """
-    print("Начала исходной триангуляции...")
+    print("Начало исходной триангуляции...")
     known_frame_1 = known_view_1[0]  # номер первого кадра, для которого известно положения камеры
     known_frame_2 = known_view_2[0]  # номер второго кадра
     known_view3x4_1 = pose_to_view_mat3x4(known_view_1[1])  # известные view-матрицы позиций камеры в обоих кадрах
@@ -257,9 +299,10 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
     found_3d_points = np.append(found_3d_points, points3d_for_1and2, axis=0)  # и соответсвующие 3d точки
 
     print("           ... исходная триангуляция завершена")
+    print()
     """------------------закончили триангуляцию------------------------------------------------------------------"""
 
-
+    """--------------начинаем основной цикл решения 2d-3d соответствий-------------------------------------------"""
     if known_frame_1 > known_frame_2:  # делаем так, чтобы второй изестный кадр по номеру был больше первого
         known_frame_1, known_frame_2 = known_frame_2, known_frame_1
         known_view3x4_1, known_view3x4_2 = known_view3x4_2, known_view3x4_1
@@ -298,40 +341,10 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         print("Шаг номер: ", num_iter, ",")
         num_iter += 1
 
-        new_frame, left_lim_1, right_lim_1, left_lim_2, right_lim_2 = \
-            choose_best_next_frame(left_lim_1, right_lim_1, left_lim_2, right_lim_2, corner_storage, corners_id_for_3d_points)
-        corners_in_frame = corner_storage[new_frame]  # взяли уголки с выбранного ранее кадра
-
-        print("Текущее облако точек имеет размер = ", len(corners_id_for_3d_points), ",")
-        print("Обрабатываем кадр номер", new_frame, "...")
-
-        # в следующих 4 строчках получаем 3d и 2d точки, соответствующие друг другу:
-        # (по аналогии с тем, что уже делали в триангуляции)
-        mask_common_ids_3d_in_frame = np.in1d(corners_id_for_3d_points, corners_in_frame.ids)
-        mask_common_ids_frame_in_3d = np.in1d(corners_in_frame.ids, corners_id_for_3d_points)
-        points3d_for_frame = found_3d_points[mask_common_ids_3d_in_frame]
-        points2d_for_frame = corners_in_frame.points[mask_common_ids_frame_in_3d]
-
-        assert (len(points2d_for_frame) == len(points3d_for_frame))
-        assert (len(points2d_for_frame) >= 4)
-        res, rvec, tvec, inliers = cv2.solvePnPRansac(objectPoints=points3d_for_frame,
-                                                      imagePoints=points2d_for_frame,
-                                                      cameraMatrix=intrinsic_mat,
-                                                      reprojectionError=REPROJECTION_ERROR,
-                                                      distCoeffs=0)
-        if not res:
-            for i in [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]:
-                res, rvec, tvec, inliers = cv2.solvePnPRansac(objectPoints=points3d_for_frame,
-                                                              imagePoints=points2d_for_frame,
-                                                              cameraMatrix=intrinsic_mat,
-                                                              reprojectionError=REPROJECTION_ERROR * i,
-                                                              distCoeffs=0)
-                print("ВНИМАНИЕ: pnp на базовой ошибке репроекции = ", REPROJECTION_ERROR, " не решилась...")
-                print("          Увеличили ошибку репроекции в " , i, " раз и повторили попытку...")
-                if res:
-                    break
-            if not res:
-                raise NameError("Не удалось решить pnp - вдимо, странное видео")
+        new_frame, left_lim_1, right_lim_1, left_lim_2, right_lim_2, rvec, tvec, inliers = \
+            choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
+                                                 found_3d_points, corners_id_for_3d_points,
+                                                 intrinsic_mat, corner_storage, REPROJECTION_ERROR)
 
         print("Кадр ", new_frame, " обработан; количество инлайеров, по которым решена pnp = ", len(inliers), ",")
         print("Текущиие кадры, для которых нашли положение камеры: [", left_lim_1, " ... ",
@@ -343,6 +356,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         frame_with_found_cam.append(new_frame)  # добавляем это в массив
         view_mats.append(new_view_camera)
 
+        """-----------теперь попытаемся до триангулировать еще 3d точек-------------------"""
         prev_frame = best_frame_for_triangl(new_frame, corner_storage, frame_with_found_cam)  # взяли кадр для триангуляции
         prev_corners = corner_storage[prev_frame]  # уголки в обоих кадрах
         new_corners = corner_storage[new_frame]
@@ -376,7 +390,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                                              prev_new_common_ids[mask_inds_not_in_found_3d_points])
         assert(len(set(corners_id_for_3d_points)) == len(corners_id_for_3d_points))  # прверяем, что все индексы 3d
         # точек различные
-
 
     """frame_count = len(corner_storage)
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count"""
