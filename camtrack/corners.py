@@ -85,29 +85,29 @@ def _build_impl(frame_sequence: pims.FramesSequence,
     картинке после взрыва); но на самом деле это не совсем вектор, а двумерный массив формы (n, 1), где в каждой строке
     стоит один элемент - 0 или 1 - не очень понятно, зачем было делать двумерный массив, почему нельзя просто вектор...-
     -поэтому иногда можно будет сделать .reshape(-1), чтобы превратить status в обычный вектор
-    
+
     3) у функции goodFeaturesToTrack есть параметр mask - в него можно подавать numpy массив такой же формы, как и
     изображение, на котором ищем уголки, но в этом массиве mask имеют значения два вида элементов - нулевые и ненулевые-
     -если элемент в mask нулевой, это значит, что на соответсвтующем пикселе изображения НЕ нужно искать уголок, а если
     ненулевой элемент - то можно искать; так мы можем указывать области поиска уголков.
     """
 
-    MAX_CORNERS = 3000  # максимальное количество уголков на изображении
-    MIN_DISTANCE = 10  # минимальное расстояние в пикселях между уголками, которые ищем
-    QUALITY_LEVEL = 0.12  # качество уголков - чем меньше, тем больше уголков найдём, но хуже качество будет
+    MAX_CORNERS = 5000  # максимальное количество уголков на изображении
+    MIN_DISTANCE = 5  # минимальное расстояние в пикселях между уголками, которые ищем
+    QUALITY_LEVEL = 0.005  # качество уголков - чем меньше, тем больше уголков найдём, но хуже качество будет
     BLOCK_SIZE = 7
     DRAW_SIZE = 3 * MIN_DISTANCE  # радиус для рисования уголка
 
     # params for ShiTomasi corner detection
     features = dict(maxCorners=MAX_CORNERS,
-                          qualityLevel=QUALITY_LEVEL,
-                          minDistance=MIN_DISTANCE,
-                          blockSize=BLOCK_SIZE)
+                    qualityLevel=QUALITY_LEVEL,
+                    minDistance=MIN_DISTANCE,
+                    blockSize=BLOCK_SIZE)
 
     # Parameters for lucas kanade optical flow
     lks = dict(winSize=(15, 15),
-                     maxLevel=2,
-                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+               maxLevel=2,
+               criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
     # изображение из последовательности - это изображение в виде numpy массив,
     # где цвет пикселя - это float значение от 0 до 1:
@@ -115,13 +115,14 @@ def _build_impl(frame_sequence: pims.FramesSequence,
 
     corners = cv2.goodFeaturesToTrack(image=image_0, mask=None,
                                       maxCorners=MAX_CORNERS,
-                                      qualityLevel=QUALITY_LEVEL / 2,
+                                      qualityLevel=QUALITY_LEVEL / 3,
                                       minDistance=MIN_DISTANCE,
                                       blockSize=BLOCK_SIZE)  # нашли уголки в нём
     if corners is None:  # если не нашли уголок, укажем какую-то точку на всякий случай
         corners = np.array([[[1, 1]]])
     n = len(corners)
-    ids = np.arange(n)  # индексы расставим так
+    ids = np.arange(n, dtype=np.int64)  # индексы расставим так (как оказалось, очень важен тип именно int64
+                                        # для дальнейших функций по отслеживанию камеры)
     prev_max_ids = ids.max()  # зафиксируем максимальный индекс, который сейчас есть у уголков (просто максимальный
     # индекс, котрый использовался для нумерации уголков)
 
@@ -135,7 +136,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
         next_img = np.uint8(image_1 * 255)
 
         # получаем положения уголков (new_corners) на новой картинке по уже найденным уголкам предыдущей картинкия:
-        new_corners, status, _ = cv2.calcOpticalFlowPyrLK(prev_img, next_img, corners, None, **lks)
+        new_corners, status, _ = cv2.calcOpticalFlowPyrLK(prev_img, next_img, corners, None)
 
         # из всех новых уголков берём только корректно отслеженные - это и будут отслеженные уголки нового кадра:
         ids = ids[status.reshape(-1) == 1]  # id уголков тоже берем, чтобы показать, что это именно отслеженные уголки
