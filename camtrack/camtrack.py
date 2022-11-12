@@ -286,7 +286,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
 
         IDS_OUTLIERS = np.append(IDS_OUTLIERS, curr_outliers)  # добавляем индексы аутлайеров (-тех точек, на которых
         # не решалась задача pnp - те они возможно выбросы)
-        IDS_OUTLIERS.sort()
+        IDS_OUTLIERS.sort()  # обязательно сортируем, так как далее мы используем этот массив в build_correspondences,
+        # а внутри этой функции есть snp.intersect, который работает правильно только с отсортированными массивами!
         found_3d_points.delete_points(IDS_OUTLIERS)
 
         print("Кадр ", new_frame, " обработан; количество инлайеров, по которым решена pnp = ", len(inliers), ",")

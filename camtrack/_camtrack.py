@@ -302,7 +302,7 @@ class PointCloudBuilder:
 
     def update_points(self, ids: np.ndarray, points: np.ndarray) -> None:
         ids = ids.astype(self.ids.dtype)
-        """мое:"""
+        """мое: - это нужно, так как snp.intersect правильно работает только с отсортированными массивами!"""
         sorting_idx = np.argsort(ids.flatten())
         ids = ids[sorting_idx].reshape(-1, 1)
         points = points[sorting_idx].reshape(-1, 3)
