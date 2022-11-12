@@ -30,7 +30,7 @@ from ba import run_bundle_adjustment
 
 def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                          found_3d_points, corners_id_for_3d_points,
-                                         intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS):
+                                     intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS, IDS_OUTLIERS):
     """
     Эта функция выбирает кадр, для которого следующим искать положение камеры в нем.
 
@@ -74,10 +74,17 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
 
             # в следующих 4 строчках получаем 3d и 2d точки, соответствующие друг другу:
             # (по аналогии с тем, что уже делали в триангуляции)
+            common_frame_and_3d = np.intersect1d(corners_id_for_3d_points, corners_in_frame.ids)
             mask_common_ids_3d_in_frame = np.in1d(corners_id_for_3d_points, corners_in_frame.ids)
             mask_common_ids_frame_in_3d = np.in1d(corners_in_frame.ids, corners_id_for_3d_points)
             points3d_for_frame = found_3d_points[mask_common_ids_3d_in_frame]
             points2d_for_frame = corners_in_frame.points[mask_common_ids_frame_in_3d]
+
+            mask_outliers = np.in1d(common_frame_and_3d, IDS_OUTLIERS)  # находим индексы аутлайеров и удаляем их
+            common_frame_and_3d = np.delete(common_frame_and_3d, mask_outliers)
+            points3d_for_frame = np.delete(points3d_for_frame, mask_outliers, axis=0)
+            points2d_for_frame = np.delete(points2d_for_frame, mask_outliers, axis=0)
+
             if not len(points2d_for_frame) >= 4:  # если не нашли хотя бы 4 точки, то pnp точно не решить - идем дальше
                 continue
             assert (len(points2d_for_frame) == len(points3d_for_frame))
@@ -88,9 +95,11 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                                                           reprojectionError=PNP_ERROR * curr_coeff_er,
                                                           distCoeffs=None,
                                                           iterationsCount=500)  # решаем pnp
+            if inliers is not None:
+                current_outliers = np.delete(common_frame_and_3d, inliers.flatten())
             if res:  # если решили:
                 best_frame = intr_frame  # фиксируем кадр
-                if (len(inliers) >= MIN_INLIERS) or (PNP_ERROR * curr_coeff_er > 10):  # если достаточно инлаеров,
+                if (len(inliers) >= MIN_INLIERS) or (PNP_ERROR * curr_coeff_er > 5):  # если достаточно инлаеров,
                     # по которым решили pnp или ошибка уже достаточно большая, что нам уже не важно, сколько
                     # инлаеров - решить бы хоть как-то, то просто выходим из всех циклов и выдаем затем результат
                     break_from_while = True    # если же нет, то крутимся в циклах, пытаясь решить далее
@@ -119,7 +128,8 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
         new_left_lim_2 = best_frame
     elif best_frame == right_lim_2 + 1:
         new_right_lim_2 = best_frame
-    return best_frame, new_left_lim_1, new_right_lim_1, new_left_lim_2, new_right_lim_2, rvec, tvec, inliers
+    return best_frame, new_left_lim_1, new_right_lim_1, new_left_lim_2, new_right_lim_2, \
+           rvec, tvec, inliers, current_outliers
 
 
 REPROJECTION_ERROR = 1
@@ -163,7 +173,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
     """
     frame_with_found_cam = []
     view_mats = []
-
+    IDS_OUTLIERS = np.array([], dtype=np.int64)
     """
     Для начала - ТРИАНГУЛЯЦИЯ, то есть ищем трехмерные точки, которые соответствуют 2d-точкам на двух
     кадрах с уже известными позиция камеры
@@ -244,15 +254,18 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
 
         print("Шаг номер: ", num_iter, ",")
 
-        new_frame, left_lim_1, right_lim_1, left_lim_2, right_lim_2, rvec, tvec, inliers = \
+        new_frame, left_lim_1, right_lim_1, left_lim_2, right_lim_2, rvec, tvec, inliers, curr_outliers = \
             choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                                  found_3d_points.points, found_3d_points.ids,
                                                  intrinsic_mat, corner_storage,
-                                                 PNP_ERROR, MIN_INLIERS)  # ищем лучший кадр, считаем
+                                                 PNP_ERROR, MIN_INLIERS, IDS_OUTLIERS)  # ищем лучший кадр, считаем
         # для него положения камеры и заодно двигаем границу областей кадров, для которых нашли положения камер ->
         # -> в результате нашли положение камеры для нового кадра
 
         assert (left_lim_1 <= right_lim_1 < left_lim_2 <= right_lim_2)  # проверяем корректность наших границ
+
+        IDS_OUTLIERS = np.append(IDS_OUTLIERS, curr_outliers)  # добавляем индексы аутлайеров (-тех точек, на которых
+        # не решалась задача pnp - те они возможно выбросы)
 
         print("Кадр ", new_frame, " обработан; количество инлайеров, по которым решена pnp = ", len(inliers), ",")
         print("Текущиие кадры, для которых нашли положение камеры: [", left_lim_1, " ... ",
@@ -264,14 +277,17 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         new_view_camera = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)  # получили view матрицу для нового кадра
         new_corners = corner_storage[new_frame]  # и уголки
 
-        for prev_frame, prev_view_camera in zip(frame_with_found_cam, view_mats):  # перебираем все предыдущие кадры,
-            # для которых уже извстна view-матрица положения камеры (и сами матрицы тоже перебираем)
+        for prev_frame, prev_view_camera in zip(frame_with_found_cam[::5], view_mats[::5]):  # перебираем все
+            # предыдущие кадры,для которых уже извстна view-матрица положения камеры
+            # (и сами матрицы тоже перебираем)  -- но так как прямо все кадры перебирать долго, перебираем, например,
+            # с шагом 5
             prev_corners = corner_storage[prev_frame]  # уголки в предыдущем кадре
 
             triang_params = TriangulationParameters(max_reprojection_error=REPROJECTION_ERROR,
                                                     min_triangulation_angle_deg=MIN_TRIANGULATION_ANGLE,
                                                     min_depth=MIN_DEPTH)  # задаем параметры триангуляции
-            correspondences_prev_new = build_correspondences(prev_corners, new_corners)  # снова находим общие уголки
+            correspondences_prev_new = build_correspondences(prev_corners, new_corners,
+                                                             ids_to_remove=IDS_OUTLIERS)  # снова находим общие уголки
             # на двух кадраха - те 2d-соответствия на этих кадрах
             if len(correspondences_prev_new.ids) < 4: continue  # если их слишком мало - переходим к следующему кадру
             new_3d_points, prev_new_common_ids, median_cos = \
