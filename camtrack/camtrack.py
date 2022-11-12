@@ -46,7 +46,7 @@ def retriangulate_points(proj_mat, view_mat_sequence, points2d_sequence):
 
 def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                          found_3d_points, corners_id_for_3d_points,
-                                     intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS, IDS_OUTLIERS):
+                                     intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS):
     """
     Эта функция выбирает кадр, для которого следующим искать положение камеры в нем.
 
@@ -74,7 +74,7 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
     if right_lim_1 == left_lim_2 - 2:
         interesting_frames.append(right_lim_1 + 1)
 
-    #interesting_frames = sorted(interesting_frames)
+    interesting_frames = sorted(interesting_frames)
 
     print("Текущее облако точек имеет размер = ", len(corners_id_for_3d_points), ",")
     print("Рассматриваем кадры с номерами: ", interesting_frames, ",")
@@ -108,8 +108,13 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                                                           reprojectionError=PNP_ERROR * curr_coeff_er,
                                                           distCoeffs=None,
                                                           iterationsCount=500)  # решаем pnp
+            """if inliers is not None and len(interesting_frames) == 1:
+                current_outliers = np.delete(common_frame_and_3d, inliers.flatten())
+            else:
+                current_outliers = np.array([], dtype=np.int64)"""
             if inliers is not None:
                 current_outliers = np.delete(common_frame_and_3d, inliers.flatten())
+
             if res:  # если решили:
                 best_frame = intr_frame  # фиксируем кадр
                 if (len(inliers) >= MIN_INLIERS) or (PNP_ERROR * curr_coeff_er > 5):  # если достаточно инлаеров,
@@ -145,12 +150,12 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
            rvec, tvec, inliers, current_outliers
 
 
-REPROJECTION_ERROR = 1
-MIN_TRIANGULATION_ANGLE = 1
+REPROJECTION_ERROR = 0.1
+MIN_TRIANGULATION_ANGLE = 2
 MIN_DEPTH = 0
-PNP_ERROR = 1
+PNP_ERROR = 2
 MIN_INLIERS = 20
-MAX_RETRIANGL = 10  # максимальное количество точек, которое ретриангулируем
+MAX_RETRIANGL = 25  # максимальное количество точек, которое ретриангулируем
 
 
 def track_and_calc_colors(camera_parameters: CameraParameters,  # параметры камеры
@@ -278,7 +283,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
             choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                                  found_3d_points.points, found_3d_points.ids,
                                                  intrinsic_mat, corner_storage,
-                                                 PNP_ERROR, MIN_INLIERS, IDS_OUTLIERS)  # ищем лучший кадр, считаем
+                                                 PNP_ERROR, MIN_INLIERS)  # ищем лучший кадр, считаем
         # для него положения камеры и заодно двигаем границу областей кадров, для которых нашли положения камер ->
         # -> в результате нашли положение камеры для нового кадра
 
@@ -300,7 +305,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         new_view_camera = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)  # получили view матрицу для нового кадра
         new_corners = corner_storage[new_frame]  # и уголки
 
-        for prev_frame, prev_view_camera in zip(frame_with_found_cam[::5], view_mats[::5]):  # перебираем все
+        for prev_frame, prev_view_camera in zip(frame_with_found_cam[::3], view_mats[::3]):  # перебираем все
             # предыдущие кадры,для которых уже извстна view-матрица положения камеры
             # (и сами матрицы тоже перебираем)  -- но так как прямо все кадры перебирать долго, перебираем, например,
             # с шагом 5
@@ -331,9 +336,9 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
 
         """_________а теперь - ретириангуляция, то есть триангулируем точки по нескольким кадрам"""
 
-        if num_iter % 25 == 0 and num_iter > 10:  # ретриангулируем каждые 10 кадров (раз в 10 кадров)
+        if num_iter % 10 == 0 and num_iter > 10:  # ретриангулируем каждые 10 кадров (раз в 10 кадров)
             count_retriang = 0
-            for known_3d_point in found_3d_points.ids[::10]:  # каждые 10 точек ретириангулируем
+            for known_3d_point in found_3d_points.ids[-MAX_RETRIANGL:]:  # каждые 10 точек ретириангулируем
                 if count_retriang == MAX_RETRIANGL: break
                 points2d_for_this_3d_point = []  # 2d-точки, соответствующие взятой 3d-точке
                 view_mats_for_frames_with_this_3d_point = []  # view-матрицы для кадров, в которых эта 3d-точка видна
