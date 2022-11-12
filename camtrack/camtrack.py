@@ -74,6 +74,8 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
     if right_lim_1 == left_lim_2 - 2:
         interesting_frames.append(right_lim_1 + 1)
 
+    #interesting_frames = sorted(interesting_frames)
+
     print("Текущее облако точек имеет размер = ", len(corners_id_for_3d_points), ",")
     print("Рассматриваем кадры с номерами: ", interesting_frames, ",")
 
@@ -95,11 +97,6 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
             mask_common_ids_frame_in_3d = np.in1d(corners_in_frame.ids, corners_id_for_3d_points)
             points3d_for_frame = found_3d_points[mask_common_ids_3d_in_frame]
             points2d_for_frame = corners_in_frame.points[mask_common_ids_frame_in_3d]
-
-            mask_outliers = np.in1d(common_frame_and_3d, IDS_OUTLIERS)  # находим индексы аутлайеров и удаляем их
-            common_frame_and_3d = np.delete(common_frame_and_3d, mask_outliers)
-            points3d_for_frame = np.delete(points3d_for_frame, mask_outliers, axis=0)
-            points2d_for_frame = np.delete(points2d_for_frame, mask_outliers, axis=0)
 
             if not len(points2d_for_frame) >= 4:  # если не нашли хотя бы 4 точки, то pnp точно не решить - идем дальше
                 continue
@@ -153,6 +150,7 @@ MIN_TRIANGULATION_ANGLE = 1
 MIN_DEPTH = 0
 PNP_ERROR = 1
 MIN_INLIERS = 20
+MAX_RETRIANGL = 10  # максимальное количество точек, которое ретриангулируем
 
 
 def track_and_calc_colors(camera_parameters: CameraParameters,  # параметры камеры
@@ -189,7 +187,13 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
     """
     frame_with_found_cam = []
     view_mats = []
+
+    """
+    И еще один массив заводим, в котором будут храниться инлексы тех уголков, которые считаются выбросами (аутлайерами),
+    то есть которые не использовались в решении задачи pnp
+    """
     IDS_OUTLIERS = np.array([], dtype=np.int64)
+
     """
     Для начала - ТРИАНГУЛЯЦИЯ, то есть ищем трехмерные точки, которые соответствуют 2d-точкам на двух
     кадрах с уже известными позиция камеры
@@ -282,6 +286,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
 
         IDS_OUTLIERS = np.append(IDS_OUTLIERS, curr_outliers)  # добавляем индексы аутлайеров (-тех точек, на которых
         # не решалась задача pnp - те они возможно выбросы)
+        IDS_OUTLIERS.sort()
+        found_3d_points.delete_points(IDS_OUTLIERS)
 
         print("Кадр ", new_frame, " обработан; количество инлайеров, по которым решена pnp = ", len(inliers), ",")
         print("Текущиие кадры, для которых нашли положение камеры: [", left_lim_1, " ... ",
@@ -305,6 +311,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
             correspondences_prev_new = build_correspondences(prev_corners, new_corners,
                                                              ids_to_remove=IDS_OUTLIERS)  # снова находим общие уголки
             # на двух кадраха - те 2d-соответствия на этих кадрах
+
             if len(correspondences_prev_new.ids) < 4: continue  # если их слишком мало - переходим к следующему кадру
             new_3d_points, prev_new_common_ids, median_cos = \
                 triangulate_correspondences(correspondences=correspondences_prev_new,
@@ -322,8 +329,11 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         view_mats.append(new_view_camera)
 
         """_________а теперь - ретириангуляция, то есть триангулируем точки по нескольким кадрам"""
-        if num_iter % 10 == 0 and num_iter > 10:  # ретриангулируем каждые 10 кадров (раз в 10 кадров)
+
+        if num_iter % 25 == 0 and num_iter > 10:  # ретриангулируем каждые 10 кадров (раз в 10 кадров)
+            count_retriang = 0
             for known_3d_point in found_3d_points.ids[::10]:  # каждые 10 точек ретириангулируем
+                if count_retriang == MAX_RETRIANGL: break
                 points2d_for_this_3d_point = []  # 2d-точки, соответствующие взятой 3d-точке
                 view_mats_for_frames_with_this_3d_point = []  # view-матрицы для кадров, в которых эта 3d-точка видна
                 for frame, view_m in zip(frame_with_found_cam, view_mats):  # перебираем кадры с известными view-матрицами
@@ -339,9 +349,9 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                                                  view_mat_sequence=view_mats_for_frames_with_this_3d_point,
                                                  points2d_sequence=points2d_for_this_3d_point)  # получаем 3d-точку
                     found_3d_points.update_points(ids=np.array([known_3d_point]), points=new3d.reshape(1, 3))  # обновляем
+                count_retriang += 1
 
         num_iter += 1
-
     """frame_count = len(corner_storage)
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count"""
     """corners_0 = corner_storage[0]"""

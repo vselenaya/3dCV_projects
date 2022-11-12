@@ -284,6 +284,11 @@ class PointCloudBuilder:
     def add_points(self, ids: np.ndarray, points: np.ndarray) -> None:
         ids = ids.reshape(-1, 1).astype(self.ids.dtype)
         points = points.reshape(-1, 3)
+        """мое:"""
+        sorting_idx = np.argsort(ids.flatten())
+        ids = ids[sorting_idx].reshape(-1, 1)
+        points = points[sorting_idx].reshape(-1, 3)
+        """"""
         _, (idx_1, idx_2) = snp.intersect(self.ids.flatten(), ids.flatten(),
                                           indices=True)
         self.points[idx_1] = points[idx_2]
@@ -297,9 +302,23 @@ class PointCloudBuilder:
 
     def update_points(self, ids: np.ndarray, points: np.ndarray) -> None:
         ids = ids.astype(self.ids.dtype)
+        """мое:"""
+        sorting_idx = np.argsort(ids.flatten())
+        ids = ids[sorting_idx].reshape(-1, 1)
+        points = points[sorting_idx].reshape(-1, 3)
+        """"""
         _, (idx_1, idx_2) = snp.intersect(self.ids.flatten(), ids.flatten(),
                                           indices=True)
         self._points[idx_1] = points[idx_2]
+
+    """мое: - то, что я дописал к исходному коду"""
+    def delete_points(self, ids: np.ndarray) -> None:
+        sorting_idx = np.argsort(ids.flatten())
+        ids = ids[sorting_idx].reshape(-1, 1)
+        _, (idx_remove, _) = snp.intersect(self.ids.flatten(), ids.flatten(), indices=True)
+        self._points = np.delete(self.points, idx_remove, axis=0)
+        self._ids = np.delete(self.ids, idx_remove, axis=0)
+    """"""
 
     def build_point_cloud(self) -> PointCloud:
         return PointCloud(self.ids, self.points, self.colors)
