@@ -5,6 +5,7 @@ __all__ = [
     'read_grayscale_f32'
 ]
 
+import os.path
 import warnings
 
 import click
@@ -24,6 +25,8 @@ def _to_grayscale(rgb):
 
 
 def read_rgb_f32(path_to_sequence: str) -> pims.FramesSequence:
+    if os.path.isdir(path_to_sequence):
+        path_to_sequence = os.path.join(path_to_sequence, '*')
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         return _to_float32(pims.open(path_to_sequence))

@@ -30,7 +30,7 @@ from ba import run_bundle_adjustment
 
 def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                          found_3d_points, corners_id_for_3d_points,
-                                         intrinsic_mat, corner_storage, PNP_ERROR):
+                                         intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS):
     """
     Эта функция выбирает кадр, для которого следующим искать положение камеры в нем.
 
@@ -89,9 +89,11 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                                                           distCoeffs=None,
                                                           iterationsCount=500)  # решаем pnp
             if res:  # если решили:
-                best_frame = intr_frame
-                if len(inliers) > MIN_INLIERS:
-                    break_from_while = True
+                best_frame = intr_frame  # фиксируем кадр
+                if (len(inliers) >= MIN_INLIERS) or (PNP_ERROR * curr_coeff_er > 10):  # если достаточно инлаеров,
+                    # по которым решили pnp или ошибка уже достаточно большая, что нам уже не важно, сколько
+                    # инлаеров - решить бы хоть как-то, то просто выходим из всех циклов и выдаем затем результат
+                    break_from_while = True    # если же нет, то крутимся в циклах, пытаясь решить далее
                     break
 
         if break_from_while: break
@@ -99,7 +101,7 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
         if PNP_ERROR * curr_coeff_er > 20:  # если ошибка уже очень большая, то выходим - что-то не так с видео
             break
 
-        curr_coeff_er += 0.5
+        curr_coeff_er += 0.5  # если ранее не вышли из цикла, то так и не решили задачу... - продолжаем с большим коэфф
         print("ВНИМАНИЕ: pnp на базовой ошибке репроекции = ", PNP_ERROR,
               " не решилась ни для какого кадра...")
         print("          Увеличили ошибку репроекции в ", curr_coeff_er, "раз и повторили попытку...")
@@ -145,16 +147,13 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         camera_parameters,
         rgb_sequence[0].shape[0]
     )
-
     # TODO: implement
     """
-    Заведем два массива - первый (corners_id_for_3d_points) - содержит в себе id (то есть номера) тех уголков, для
-    которых найдены 3d точки (то есть те 3d точки, которые проецируется в эти уголки (ведь уголки с одним и тем же id - 
-    это фактически изображение одних и тех же 3d точек (и они могут быть на разных кадрах))
-    
-    Второй массив (found_3d_points) - это соответствующие 3d точки
+    Сразу заводим структуру found_3d_points класса PointCloudBuilder(), в котором будем хранить найденные 3d точки
+    (они хранятся вместе с id (то есть номерами) тех уголков, для которых найдены 3d точки (то есть те 3d точки, 
+    которые проецируется в эти уголки (ведь уголки с одним и тем же id - это фактически изображение одних и тех же
+    3d точек (и они могут быть на разных кадрах))
     """
-    # corners_id_for_3d_points =
     found_3d_points = PointCloudBuilder()
 
     """
@@ -187,20 +186,24 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
     known_1_corners = corner_storage[known_frame_1]  # уголки в кадрах, для которыз позиции камеры известны
     known_2_corners = corner_storage[known_frame_2]            # (имеют тип FrameCorners)
 
-    triang_params = TriangulationParameters(max_reprojection_error=5,
-                                            min_triangulation_angle_deg=0,
-                                            min_depth=0)
+    triang_params = TriangulationParameters(max_reprojection_error=5,  # параметры для первичной триангуляции задаем
+                                            min_triangulation_angle_deg=0,  # самые мягкие, потому что уж первчиная
+                                            min_depth=0)  # триангуляция точно должна пройти
 
-    correspondences_known_1_2 = build_correspondences(known_1_corners, known_2_corners)
-    assert (len(correspondences_known_1_2.ids) > 3)
+    correspondences_known_1_2 = build_correspondences(known_1_corners, known_2_corners)  # строим пересечение уголков
+    # на двух кадрах - те ищем одни и те же уголки (у них один и тот же id) на двух кадрах - это наши двумерные
+    # соответствия - далее по этим двумерным соответствиям восстанавливаем 3d точки, проецирующиеся в эти уголки
+    assert (len(correspondences_known_1_2.ids) > 3)  # проверяем, что у нас достаточно много двумерных соответствий
 
     points3d_for_1and2, ids_common_known_corners, median_cos = \
         triangulate_correspondences(correspondences=correspondences_known_1_2,
                                     view_mat_1=known_view3x4_1, view_mat_2=known_view3x4_2,
-                                    intrinsic_mat=intrinsic_mat, parameters=triang_params)
-    assert (len(ids_common_known_corners) > 3)  # проверяем, что у нас достаточно много двумерных соответствий
+                                    intrinsic_mat=intrinsic_mat, parameters=triang_params)  # по двумерным точкам
+    # восстанавливаем 3d точки (points3d_for_1and2),  также получаем инлексы (id) (ids_common_known_corners)
+    # для этих точек - эти id- это id уголков, в которые эти 3d-точки проецируются
+    assert (len(ids_common_known_corners) > 3)  # проверяем, что у нас достаточно много 3d точек
 
-    found_3d_points.add_points(ids=ids_common_known_corners, points=points3d_for_1and2)  # добавляем id уголков
+    found_3d_points.add_points(ids=ids_common_known_corners, points=points3d_for_1and2)  # добавляем точки
 
     print("           ... исходная триангуляция завершена")
     print()
@@ -244,8 +247,12 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         new_frame, left_lim_1, right_lim_1, left_lim_2, right_lim_2, rvec, tvec, inliers = \
             choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                                  found_3d_points.points, found_3d_points.ids,
-                                                 intrinsic_mat, corner_storage, PNP_ERROR)
-        assert (left_lim_1 <= right_lim_1 < left_lim_2 <= right_lim_2)
+                                                 intrinsic_mat, corner_storage,
+                                                 PNP_ERROR, MIN_INLIERS)  # ищем лучший кадр, считаем
+        # для него положения камеры и заодно двигаем границу областей кадров, для которых нашли положения камер ->
+        # -> в результате нашли положение камеры для нового кадра
+
+        assert (left_lim_1 <= right_lim_1 < left_lim_2 <= right_lim_2)  # проверяем корректность наших границ
 
         print("Кадр ", new_frame, " обработан; количество инлайеров, по которым решена pnp = ", len(inliers), ",")
         print("Текущиие кадры, для которых нашли положение камеры: [", left_lim_1, " ... ",
@@ -255,26 +262,31 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
 
         """-----------теперь попытаемся дотриангулировать еще 3d точек-------------------"""
         new_view_camera = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)  # получили view матрицу для нового кадра
-        new_corners = corner_storage[new_frame]
+        new_corners = corner_storage[new_frame]  # и уголки
 
-        for prev_frame, prev_view_camera in zip(frame_with_found_cam, view_mats):
-            prev_corners = corner_storage[prev_frame]  # уголки в обоих кадрах
+        for prev_frame, prev_view_camera in zip(frame_with_found_cam, view_mats):  # перебираем все предыдущие кадры,
+            # для которых уже извстна view-матрица положения камеры (и сами матрицы тоже перебираем)
+            prev_corners = corner_storage[prev_frame]  # уголки в предыдущем кадре
 
             triang_params = TriangulationParameters(max_reprojection_error=REPROJECTION_ERROR,
                                                     min_triangulation_angle_deg=MIN_TRIANGULATION_ANGLE,
-                                                    min_depth=MIN_DEPTH)
-            correspondences_prev_new = build_correspondences(prev_corners, new_corners)
-            if len(correspondences_prev_new.ids) < 4: continue
+                                                    min_depth=MIN_DEPTH)  # задаем параметры триангуляции
+            correspondences_prev_new = build_correspondences(prev_corners, new_corners)  # снова находим общие уголки
+            # на двух кадраха - те 2d-соответствия на этих кадрах
+            if len(correspondences_prev_new.ids) < 4: continue  # если их слишком мало - переходим к следующему кадру
             new_3d_points, prev_new_common_ids, median_cos = \
                 triangulate_correspondences(correspondences=correspondences_prev_new,
                                             view_mat_1=prev_view_camera, view_mat_2=new_view_camera,
-                                            intrinsic_mat=intrinsic_mat, parameters=triang_params)
+                                            intrinsic_mat=intrinsic_mat, parameters=triang_params)  # получаем 3d-точки,
+            # и индексы (id) уголков
 
-            if len(prev_new_common_ids) > 0:
+            if len(prev_new_common_ids) > 0:  # если гашли больше нуля точек:
                 # добавляем новые 3d точки - но только те, которых ещё нет:
+                # (то, что добавятся только новые 3d точки, гарантируется самим методо add_points - он добавляет только
+                # еще несуществующие 3d-точки):
                 found_3d_points.add_points(ids=prev_new_common_ids, points=new_3d_points)
 
-        frame_with_found_cam.append(new_frame)  # добавляем это в массив
+        frame_with_found_cam.append(new_frame)  # добавляем новую камеру это в массив
         view_mats.append(new_view_camera)
 
 
@@ -309,6 +321,20 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
     )
     point_cloud = point_cloud_builder.build_point_cloud()
 
+    """
+    ОЧЕНЬ ВАЖНО! 
+    во view_mats мы добавляли матрицы камер в том порядке, в котором мы их находили (а могли найти сначла камеру
+    для 1 кадра, затем для десятого...), а вернуть нам нужно матрицы в том же порядке, в котором у нас идут кадры - 
+    те сначала должна идти view-матрица (которую мы в pose переделываем) для 0-го кадра, затем для 1-ого и тд
+    
+    Так как параллельно с добавлением матриц во view-mats мы еще и добавляли номера кадров, для которых нашли
+    эту view-матрицу, то просто отсортируем view-mats по frame_with_found_cam, в котором эти номера кадров и хранятся
+    (то есть переставим элементы view_mats так, чтобы соответствующие номера кадров во frame_with_found_cam встали
+    по порядку) - это и делаем далее:
+    
+    (этой ошибки долго не замечал, из-за этого все время были большие ошибки, так как выводимые pose камер не соответ-
+    ствовали кадру)
+    """
     temp = sorted(zip(frame_with_found_cam, view_mats), key=lambda x: x[0])
     frame_with_found_cam = [vm[0] for vm in temp]
     view_mats = [vm[1] for vm in temp]
