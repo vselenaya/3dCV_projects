@@ -28,6 +28,22 @@ from _camtrack import (
 from ba import run_bundle_adjustment
 
 
+def retriangulate_points(proj_mat, view_mat_sequence, points2d_sequence):
+    assert (len(view_mat_sequence) == len(points2d_sequence))
+
+    Pi_sequence = [proj_mat @ view_mat for view_mat in view_mat_sequence]
+    points2d_homog = [np.hstack((point2d, 1)) for point2d in points2d_sequence]
+
+    num = len(Pi_sequence)
+    M = np.zeros((3 * num, 4 + num))
+    for i, (x, Pi) in enumerate(zip(points2d_homog, Pi_sequence)):  # по аналогиии с практикой 6
+        M[3 * i:3 * i + 3, :4] = Pi
+        M[3 * i:3 * i + 3, 4 + i] = -x
+    V = np.linalg.svd(M)[-1]
+    X = V[-1, :4]
+    return (X / X[3])[:3]
+
+
 def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                          found_3d_points, corners_id_for_3d_points,
                                      intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS, IDS_OUTLIERS):
@@ -305,21 +321,26 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         frame_with_found_cam.append(new_frame)  # добавляем новую камеру это в массив
         view_mats.append(new_view_camera)
 
+        """_________а теперь - ретириангуляция, то есть триангулируем точки по нескольким кадрам"""
+        if num_iter % 10 == 0 and num_iter > 10:  # ретриангулируем каждые 10 кадров (раз в 10 кадров)
+            for known_3d_point in found_3d_points.ids[::10]:  # каждые 10 точек ретириангулируем
+                points2d_for_this_3d_point = []  # 2d-точки, соответствующие взятой 3d-точке
+                view_mats_for_frames_with_this_3d_point = []  # view-матрицы для кадров, в которых эта 3d-точка видна
+                for frame, view_m in zip(frame_with_found_cam, view_mats):  # перебираем кадры с известными view-матрицами
+                    if known_3d_point in corner_storage[frame].ids:  # если 3d-точка есть на кадре
+                        index_3d_point = list(corner_storage[frame].ids).index(known_3d_point)
+                        points2d_for_this_3d_point.append(corner_storage[frame].points[index_3d_point])
+                        view_mats_for_frames_with_this_3d_point.append(view_m)
 
-        """
-        if num_iter % 10 == 0 and num_iter > 20:
-            # print('Frame {}: new points {}, total {}'.format(frame, delta, builder.points.shape[0]))
-            view_mats[-20:] = run_bundle_adjustment(
-                intrinsic_mat=intrinsic_mat,
-                list_of_corners=[corner_storage[i] for i in frame_with_found_cam[-20:]],
-                max_inlier_reprojection_error=REPROJECTION_ERROR,
-                views=view_mats[-20:],
-                pc_builder=found_3d_points)
-        """
+                if len(view_mats_for_frames_with_this_3d_point) < 3:  # если маловато кадров - идем дальше
+                    continue
+                else:
+                    new3d = retriangulate_points(proj_mat=intrinsic_mat,
+                                                 view_mat_sequence=view_mats_for_frames_with_this_3d_point,
+                                                 points2d_sequence=points2d_for_this_3d_point)  # получаем 3d-точку
+                    found_3d_points.update_points(ids=np.array([known_3d_point]), points=new3d.reshape(1, 3))  # обновляем
 
         num_iter += 1
-
-
 
     """frame_count = len(corner_storage)
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count"""
