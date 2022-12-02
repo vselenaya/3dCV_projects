@@ -158,34 +158,30 @@ def get_initial_frames(corner_storage, intrinsic_mat):
     best_inliers = 0
 
     frames_all = len(corner_storage)
-    delta = len(corner_storage) // 3
-    flag = False
-    while True:
-        if flag: break
-        for i in tqdm.tqdm(range(0, frames_all // 3, 5)):
-            for j in range(i + delta, frames_all, 5):
-                correspondences = build_correspondences(corner_storage[i], corner_storage[j])
-                if len(correspondences.ids) < 100:
-                    continue
-                homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
-                                                                     cv2.RANSAC)
-                essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
-                                                                     correspondences.points_2,
-                                                                     intrinsic_mat, cv2.RANSAC, 0.999, 1.0)
-                if mask_essential.sum() / mask_homography.sum() < 0.8:
-                    continue
 
-                essential_inliers_idx = mask_essential.flatten()[mask_essential.flatten() == 1]
-                retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[essential_inliers_idx],
-                                                     correspondences.points_2[essential_inliers_idx], intrinsic_mat)
+    for i in tqdm.tqdm(range(0, frames_all // 3, 5)):
+        for j in range(i + 10, frames_all, 5):
+            correspondences = build_correspondences(corner_storage[i], corner_storage[j])
+            if len(correspondences.ids) < 200:
+                continue
+            homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
+                                                                 cv2.RANSAC)
+            essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
+                                                                 correspondences.points_2,
+                                                                 intrinsic_mat, cv2.RANSAC, 0.999, 1.0)
+            if mask_essential.sum() / mask_homography.sum() < 0.8:
+                continue
 
-                if best_inliers < retval / len(correspondences.ids):
-                    flag = True
-                    best_inliers = retval / len(correspondences.ids)
-                    best_frames = (i, j)
-                    best_R_t = (R, t)
+            inliers_idx = mask_essential.flatten()[(mask_essential.flatten() == 1) & (mask_homography.flatten() == 0)]
+            if (len(inliers_idx) < 9): continue
+            retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[inliers_idx],
+                                                 correspondences.points_2[inliers_idx], intrinsic_mat)
 
-        delta //= 2
+            if best_inliers < retval / len(correspondences.ids):
+                best_inliers = retval / len(correspondences.ids)
+                best_frames = (i, j)
+                best_R_t = (R, t)
+
 
     assert (best_R_t is not None)
 
@@ -203,7 +199,7 @@ def get_initial_frames(corner_storage, intrinsic_mat):
 REPROJECTION_ERROR = 0.1  # ошибка репроекции при получении 3d-3d соответствий
 MIN_TRIANGULATION_ANGLE = 2  # минимальный угол триангуляции
 MIN_DEPTH = 0
-PNP_ERROR = 2  # ошибка репроекции при решении задачи pnp
+PNP_ERROR = 2.5  # ошибка репроекции при решении задачи pnp
 MIN_INLIERS = 20  # минимальное количество инлайеров, которое нас устраивает для решения pnp
 MAX_RETRIANGL = 25  # максимальное количество точек, которое ретриангулируем
 
