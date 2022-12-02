@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import cv2
 
+import tqdm
 from corners import CornerStorage
 from data3d import CameraParameters, PointCloud, Pose
 import frameseq
@@ -22,7 +23,8 @@ from _camtrack import (
     rodrigues_and_translation_to_view_mat3x4,
     TriangulationParameters,
     build_correspondences,
-    triangulate_correspondences
+    triangulate_correspondences,
+    eye3x4
 )
 #from __test_camtr import create_cli
 from ba import run_bundle_adjustment
@@ -46,14 +48,14 @@ def retriangulate_points(proj_mat, view_mat_sequence, points2d_sequence):
 
 def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                          found_3d_points, corners_id_for_3d_points,
-                                     intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS):
+                                         intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS):
     """
     Эта функция выбирает кадр, для которого следующим искать положение камеры в нем.
 
     Для этого мы будем кадр только среди кадров, соседних с теми, для которых уже нашли позицию камеры (ведь так больше
     шансов найти кадр с наибольши количество 2d-3d соответствий) - как мы уже говорили,
     у нас две области номеров таких кадров: [left_lim_1 ... right_lim_1] и [left_lim_2 ... right_lim_2] -
-    - так что, соседние с ними кадры и перебираем.
+    - так что, соседние с ними кадры (их, очевидно, не больше четырёх) и перебираем.
 
     А далее для каждого такого кадра решаем задачу pnp - и как только она решится, мы считаем, что нашли подходящий
     кадр - его и выдаем, а заодно границы областей, для которых нашли позицию камеры, а также возвращаем результат
@@ -108,12 +110,10 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                                                           reprojectionError=PNP_ERROR * curr_coeff_er,
                                                           distCoeffs=None,
                                                           iterationsCount=500)  # решаем pnp
-            """if inliers is not None and len(interesting_frames) == 1:
-                current_outliers = np.delete(common_frame_and_3d, inliers.flatten())
-            else:
-                current_outliers = np.array([], dtype=np.int64)"""
+
             if inliers is not None:
-                current_outliers = np.delete(common_frame_and_3d, inliers.flatten())
+                current_outliers = np.delete(common_frame_and_3d, inliers.flatten())  # удаляем из всех соответствий
+                # инлайеры -> остаются аутлайеры для текущего решения pnp
 
             if res:  # если решили:
                 best_frame = intr_frame  # фиксируем кадр
@@ -150,11 +150,52 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
            rvec, tvec, inliers, current_outliers
 
 
-REPROJECTION_ERROR = 0.1
-MIN_TRIANGULATION_ANGLE = 2
+def get_initial_frames(corner_storage, intrinsic_mat):
+    print("Начинаем инициализацию (поиск положений камеры на двух кадрах)...")
+    best_frames = None
+    best_R_t = None
+    best_inliers = 0
+
+    frames_all = len(corner_storage)
+    for i in tqdm.tqdm(range(0, frames_all // 3, 5)):
+        for j in range(i + 30, i + 100, 2):
+            if j >= frames_all: continue
+            correspondences = build_correspondences(corner_storage[i], corner_storage[j])
+            homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
+                                                                 cv2.RANSAC)
+            essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
+                                                                 correspondences.points_2,
+                                                                 intrinsic_mat, cv2.RANSAC, 0.999, 1.0)
+            if mask_essential.sum() / mask_homography.sum() < 0.8:
+                continue
+
+            essential_inliers_idx = mask_essential.flatten()[mask_essential.flatten() == 1]
+            retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[essential_inliers_idx],
+                                                 correspondences.points_2[essential_inliers_idx], intrinsic_mat)
+
+            if best_inliers < retval:
+                best_inliers = retval
+                best_frames = (i, j)
+                best_R_t = (R, t)
+
+    assert (best_R_t is not None)
+
+    first_frame, second_frame = best_frames
+    R, t = best_R_t
+    pose_first = view_mat3x4_to_pose(eye3x4())
+    pose_second = Pose(R.T, R.T @ -t)
+
+    print("Инициализация завершена - выбраны кадры: ", first_frame, second_frame)
+    print("----------------------------------------------------------------------------------------------------")
+
+    return (first_frame, pose_first), (second_frame, pose_second)
+
+
+REPROJECTION_ERROR = 0.1  # ошибка репроекции при получении 3d-3d соответствий
+MIN_TRIANGULATION_ANGLE = 2  # минимальный угол триангуляции
 MIN_DEPTH = 0
-PNP_ERROR = 2.5
-MIN_INLIERS = 20
+PNP_ERROR = 2  # ошибка репроекции при решении задачи pnp
+MIN_INLIERS = 20  # минимальное количество инлайеров, которое нас устраивает для решения pnp
 MAX_RETRIANGL = 25  # максимальное количество точек, которое ретриангулируем
 
 
@@ -168,14 +209,16 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                           known_view_2: Optional[Tuple[int, Pose]] = None) \
         -> Tuple[List[Pose], PointCloud]:  # возвращаем список позиций камеры (индексирован номерами кадров) и 3d точки
 
-    if known_view_1 is None or known_view_2 is None:
-        raise NotImplementedError()
-
     rgb_sequence = frameseq.read_rgb_f32(frame_sequence_path)
     intrinsic_mat = to_opencv_camera_mat3x3(  # матрица внутренних параметров камеры (где фокусное расст и центр камеры)
         camera_parameters,
         rgb_sequence[0].shape[0]
     )
+
+    if known_view_1 is None or known_view_2 is None:
+        known_view_1, known_view_2 = get_initial_frames(corner_storage=corner_storage, intrinsic_mat=intrinsic_mat)
+        # raise NotImplementedError()
+
     # TODO: implement
     """
     Сразу заводим структуру found_3d_points класса PointCloudBuilder(), в котором будем хранить найденные 3d точки
@@ -293,7 +336,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         # не решалась задача pnp - те они возможно выбросы)
         IDS_OUTLIERS.sort()  # обязательно сортируем, так как далее мы используем этот массив в build_correspondences,
         # а внутри этой функции есть snp.intersect, который работает правильно только с отсортированными массивами!
-        found_3d_points.delete_points(IDS_OUTLIERS)
+        found_3d_points.delete_points(IDS_OUTLIERS)  # удаляем аутлайеры из 3d-точек, чтобы они не мешали дальше
 
         print("Кадр ", new_frame, " обработан; количество инлайеров, по которым решена pnp = ", len(inliers), ",")
         print("Текущиие кадры, для которых нашли положение камеры: [", left_lim_1, " ... ",
@@ -325,7 +368,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                                             intrinsic_mat=intrinsic_mat, parameters=triang_params)  # получаем 3d-точки,
             # и индексы (id) уголков
 
-            if len(prev_new_common_ids) > 0:  # если гашли больше нуля точек:
+            if len(prev_new_common_ids) > 0:  # если нашли больше нуля точек:
                 # добавляем новые 3d точки - но только те, которых ещё нет:
                 # (то, что добавятся только новые 3d точки, гарантируется самим методо add_points - он добавляет только
                 # еще несуществующие 3d-точки):
