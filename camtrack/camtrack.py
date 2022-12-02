@@ -152,31 +152,40 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
 
 def get_initial_frames(corner_storage, intrinsic_mat):
     print("Начинаем инициализацию (поиск положений камеры на двух кадрах)...")
+
     best_frames = None
     best_R_t = None
     best_inliers = 0
 
     frames_all = len(corner_storage)
-    for i in tqdm.tqdm(range(0, frames_all // 3, 5)):
-        for j in range(i + 30, i + 100, 2):
-            if j >= frames_all: continue
-            correspondences = build_correspondences(corner_storage[i], corner_storage[j])
-            homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
-                                                                 cv2.RANSAC)
-            essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
-                                                                 correspondences.points_2,
-                                                                 intrinsic_mat, cv2.RANSAC, 0.999, 1.0)
-            if mask_essential.sum() / mask_homography.sum() < 0.8:
-                continue
+    delta = len(corner_storage) // 3
+    flag = False
+    while True:
+        if flag: break
+        for i in tqdm.tqdm(range(0, frames_all // 3, 5)):
+            for j in range(i + delta, frames_all, 5):
+                correspondences = build_correspondences(corner_storage[i], corner_storage[j])
+                if len(correspondences.ids) < 100:
+                    continue
+                homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
+                                                                     cv2.RANSAC)
+                essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
+                                                                     correspondences.points_2,
+                                                                     intrinsic_mat, cv2.RANSAC, 0.999, 1.0)
+                if mask_essential.sum() / mask_homography.sum() < 0.8:
+                    continue
 
-            essential_inliers_idx = mask_essential.flatten()[mask_essential.flatten() == 1]
-            retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[essential_inliers_idx],
-                                                 correspondences.points_2[essential_inliers_idx], intrinsic_mat)
+                essential_inliers_idx = mask_essential.flatten()[mask_essential.flatten() == 1]
+                retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[essential_inliers_idx],
+                                                     correspondences.points_2[essential_inliers_idx], intrinsic_mat)
 
-            if best_inliers < retval:
-                best_inliers = retval
-                best_frames = (i, j)
-                best_R_t = (R, t)
+                if best_inliers < retval / len(correspondences.ids):
+                    flag = True
+                    best_inliers = retval / len(correspondences.ids)
+                    best_frames = (i, j)
+                    best_R_t = (R, t)
+
+        delta //= 2
 
     assert (best_R_t is not None)
 
