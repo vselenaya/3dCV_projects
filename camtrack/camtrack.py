@@ -153,7 +153,7 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
 REPROJECTION_ERROR = 0.1
 MIN_TRIANGULATION_ANGLE = 2
 MIN_DEPTH = 0
-PNP_ERROR = 2
+PNP_ERROR = 2.5
 MIN_INLIERS = 20
 MAX_RETRIANGL = 25  # максимальное количество точек, которое ретриангулируем
 
@@ -308,7 +308,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
         for prev_frame, prev_view_camera in zip(frame_with_found_cam[::3], view_mats[::3]):  # перебираем все
             # предыдущие кадры,для которых уже извстна view-матрица положения камеры
             # (и сами матрицы тоже перебираем)  -- но так как прямо все кадры перебирать долго, перебираем, например,
-            # с шагом 5
+            # с шагом 3
             prev_corners = corner_storage[prev_frame]  # уголки в предыдущем кадре
 
             triang_params = TriangulationParameters(max_reprojection_error=REPROJECTION_ERROR,
@@ -356,6 +356,17 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                                                  points2d_sequence=points2d_for_this_3d_point)  # получаем 3d-точку
                     found_3d_points.update_points(ids=np.array([known_3d_point]), points=new3d.reshape(1, 3))  # обновляем
                 count_retriang += 1
+
+        """
+        if num_iter % 30 == 0 and num_iter > 10:
+            # print('Frame {}: new points {}, total {}'.format(frame, delta, builder.points.shape[0]))
+            view_mats[-10:] = run_bundle_adjustment(
+                intrinsic_mat=intrinsic_mat,
+                list_of_corners=[corner_storage[i] for i in frame_with_found_cam[-10:]],
+                max_inlier_reprojection_error=REPROJECTION_ERROR,
+                views=view_mats[-10:],
+                pc_builder=found_3d_points)
+        """
 
         num_iter += 1
     """frame_count = len(corner_storage)
