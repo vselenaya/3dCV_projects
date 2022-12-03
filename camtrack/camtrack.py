@@ -24,7 +24,8 @@ from _camtrack import (
     TriangulationParameters,
     build_correspondences,
     triangulate_correspondences,
-    eye3x4
+    eye3x4,
+    view_mat3x4_to_rodrigues_and_translation
 )
 #from __test_camtr import create_cli
 from ba import run_bundle_adjustment
@@ -48,7 +49,8 @@ def retriangulate_points(proj_mat, view_mat_sequence, points2d_sequence):
 
 def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                          found_3d_points, corners_id_for_3d_points,
-                                         intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS):
+                                         intrinsic_mat, corner_storage, PNP_ERROR, MIN_INLIERS,
+                                         frame_with_found_cam, view_mats):
     """
     Эта функция выбирает кадр, для которого следующим искать положение камеры в нем.
 
@@ -67,26 +69,26 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
     interesting_frames = []  # номера кадров, которые можно сейчас рассмотреть - это соседние кадры с кадрами, для
     # которых уже известны положения камеры (так больше шансов найти 2d-2в соответствия)
     if left_lim_1 > 0:
-        interesting_frames.append(left_lim_1 - 1)
+        interesting_frames.append((left_lim_1 - 1, left_lim_1))
     if right_lim_2 < len(corner_storage) - 1:
-        interesting_frames.append(right_lim_2 + 1)
+        interesting_frames.append((right_lim_2 + 1, right_lim_2))
     if right_lim_1 < left_lim_2 - 2:
-        interesting_frames.append(right_lim_1 + 1)
-        interesting_frames.append(left_lim_2 - 1)
+        interesting_frames.append((right_lim_1 + 1, right_lim_1))
+        interesting_frames.append((left_lim_2 - 1, left_lim_2))
     if right_lim_1 == left_lim_2 - 2:
-        interesting_frames.append(right_lim_1 + 1)
+        interesting_frames.append((right_lim_1 + 1, right_lim_1))
 
-    interesting_frames = sorted(interesting_frames)
+    interesting_frames = sorted(interesting_frames, key=lambda pair: pair[0])
 
     print("Текущее облако точек имеет размер = ", len(corners_id_for_3d_points), ",")
-    print("Рассматриваем кадры с номерами: ", interesting_frames, ",")
+    print("Рассматриваем кадры с номерами: ", [pair[0] for pair in interesting_frames], ",")
 
     best_frame = -1  # лучший кадр, который и ищем
     res = False  # пока что pnp не решили
     break_from_while = False  # пока из while выходить не нужно
     curr_coeff_er = 1  # именно на этот коэффициент домножаем ошибку решения PNP
     while True:
-        for intr_frame in interesting_frames:
+        for intr_frame, neighbor_to_intr_frame in interesting_frames:
             corners_in_frame = corner_storage[intr_frame]  # взяли уголки с выбранного кадра
 
             print("Обрабатываем кадр номер", intr_frame, "...")
@@ -104,12 +106,18 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                 continue
             assert (len(points2d_for_frame) == len(points3d_for_frame))
 
+            neighbor_view = view_mats[frame_with_found_cam.index(neighbor_to_intr_frame)]
+            neighbor_rvec, neighbor_tvec = view_mat3x4_to_rodrigues_and_translation(neighbor_view)
             res, rvec, tvec, inliers = cv2.solvePnPRansac(objectPoints=points3d_for_frame,
                                                           imagePoints=points2d_for_frame,
                                                           cameraMatrix=intrinsic_mat,
                                                           reprojectionError=PNP_ERROR * curr_coeff_er,
                                                           distCoeffs=None,
-                                                          iterationsCount=500)  # решаем pnp
+                                                          iterationsCount=500,
+                                                          useExtrinsicGuess=True,
+                                                          rvec=neighbor_rvec.copy(),
+                                                          tvec=neighbor_tvec.copy())  # решаем pnp
+            tvec = tvec.reshape(-1, 1)
 
             if inliers is not None:
                 current_outliers = np.delete(common_frame_and_3d, inliers.flatten())  # удаляем из всех соответствий
@@ -165,18 +173,19 @@ def get_initial_frames(corner_storage, intrinsic_mat):
             if len(correspondences.ids) < 200:
                 continue
             homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
-                                                                 cv2.RANSAC)
+                                                                 cv2.RANSAC, 0.5)
             essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
                                                                  correspondences.points_2,
-                                                                 intrinsic_mat, cv2.RANSAC, 0.999, 1.0)
+                                                                 intrinsic_mat, cv2.RANSAC, 0.999, 1)
             if mask_essential.sum() / mask_homography.sum() < 0.8:
                 continue
-
             inliers_idx = mask_essential.flatten()[(mask_essential.flatten() == 1) & (mask_homography.flatten() == 0)]
-            if (len(inliers_idx) < 9): continue
+            if len(inliers_idx) < 9:
+                continue
             retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[inliers_idx],
                                                  correspondences.points_2[inliers_idx], intrinsic_mat)
 
+            # print(retval)
             if best_inliers < retval / len(correspondences.ids):
                 best_inliers = retval / len(correspondences.ids)
                 best_frames = (i, j)
@@ -331,7 +340,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
             choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, right_lim_2,
                                                  found_3d_points.points, found_3d_points.ids,
                                                  intrinsic_mat, corner_storage,
-                                                 PNP_ERROR, MIN_INLIERS)  # ищем лучший кадр, считаем
+                                                 PNP_ERROR, MIN_INLIERS,
+                                                 frame_with_found_cam, view_mats)  # ищем лучший кадр, считаем
         # для него положения камеры и заодно двигаем границу областей кадров, для которых нашли положения камер ->
         # -> в результате нашли положение камеры для нового кадра
 
@@ -348,7 +358,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
               right_lim_1, "], [", left_lim_2, " ... ", right_lim_2, "], а всего кадров: ", len(corner_storage), ".")
         print("-------------------------------------------------------")
         print()
-
+        #print(rvec, tvec)
         """-----------теперь попытаемся дотриангулировать еще 3d точек-------------------"""
         new_view_camera = rodrigues_and_translation_to_view_mat3x4(rvec, tvec)  # получили view матрицу для нового кадра
         new_corners = corner_storage[new_frame]  # и уголки
