@@ -115,7 +115,7 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                                                           distCoeffs=None,
                                                           iterationsCount=500,
                                                           useExtrinsicGuess=True,
-                                                          rvec=neighbor_rvec.copy(),
+                                                          rvec=neighbor_rvec.copy(),  # начальные значения, чтобы проще решить pnp
                                                           tvec=neighbor_tvec.copy())  # решаем pnp
             tvec = tvec.reshape(-1, 1)
 
@@ -173,7 +173,7 @@ def get_initial_frames(corner_storage, intrinsic_mat):
             if len(correspondences.ids) < 200:
                 continue
             homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
-                                                                 cv2.RANSAC, 0.5)
+                                                                 cv2.RANSAC, 3)
             essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
                                                                  correspondences.points_2,
                                                                  intrinsic_mat, cv2.RANSAC, 0.999, 1)
@@ -415,16 +415,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                     found_3d_points.update_points(ids=np.array([known_3d_point]), points=new3d.reshape(1, 3))  # обновляем
                 count_retriang += 1
 
-        """
-        if num_iter % 30 == 0 and num_iter > 10:
-            # print('Frame {}: new points {}, total {}'.format(frame, delta, builder.points.shape[0]))
-            view_mats[-10:] = run_bundle_adjustment(
-                intrinsic_mat=intrinsic_mat,
-                list_of_corners=[corner_storage[i] for i in frame_with_found_cam[-10:]],
-                max_inlier_reprojection_error=REPROJECTION_ERROR,
-                views=view_mats[-10:],
-                pc_builder=found_3d_points)
-        """
 
         num_iter += 1
     """frame_count = len(corner_storage)
