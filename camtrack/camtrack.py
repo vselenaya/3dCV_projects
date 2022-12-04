@@ -80,6 +80,12 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
 
     interesting_frames = sorted(interesting_frames, key=lambda pair: pair[0])
 
+    """?????"""
+    if (left_lim_1 > 0) and (right_lim_1 < left_lim_2 - 2):
+        if left_lim_1 > (left_lim_2 - right_lim_1):
+            interesting_frames[0], interesting_frames[1] = interesting_frames[1], interesting_frames[0]
+    """-----"""
+
     print("Текущее облако точек имеет размер = ", len(corners_id_for_3d_points), ",")
     print("Рассматриваем кадры с номерами: ", [pair[0] for pair in interesting_frames], ",")
 
@@ -113,7 +119,7 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
                                                           cameraMatrix=intrinsic_mat,
                                                           reprojectionError=PNP_ERROR * curr_coeff_er,
                                                           distCoeffs=None,
-                                                          iterationsCount=500,
+                                                          iterationsCount=3000,
                                                           useExtrinsicGuess=True,
                                                           rvec=neighbor_rvec.copy(),  # начальные значения, чтобы проще решить pnp
                                                           tvec=neighbor_tvec.copy())  # решаем pnp
@@ -168,18 +174,20 @@ def get_initial_frames(corner_storage, intrinsic_mat):
     frames_all = len(corner_storage)
 
     for i in tqdm.tqdm(range(0, frames_all // 3, 5)):
-        for j in range(i + 10, frames_all, 5):
+        for j in range(i + 5, frames_all, 5):
             correspondences = build_correspondences(corner_storage[i], corner_storage[j])
             if len(correspondences.ids) < 200:
                 continue
             homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
-                                                                 cv2.RANSAC, 3)
+                                                                 cv2.RANSAC, 4)
             essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
                                                                  correspondences.points_2,
                                                                  intrinsic_mat, cv2.RANSAC, 0.999, 1)
-            if mask_essential.sum() / mask_homography.sum() < 0.8:
-                continue
-            inliers_idx = mask_essential.flatten()[(mask_essential.flatten() == 1) & (mask_homography.flatten() == 0)]
+            #if mask_essential.sum() / mask_homography.sum() < 0.8:
+                #continue
+            # inliers_idx = mask_essential.flatten()[(mask_essential.flatten() == 1) & (mask_homography.flatten() == 0)]
+            inliers_idx = np.arange(len(mask_essential))[(mask_essential.flatten() == 1) & (mask_homography.flatten() == 0)]
+
             if len(inliers_idx) < 9:
                 continue
             retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[inliers_idx],
@@ -191,11 +199,26 @@ def get_initial_frames(corner_storage, intrinsic_mat):
                 best_frames = (i, j)
                 best_R_t = (R, t)
 
-
     assert (best_R_t is not None)
-
+    
     first_frame, second_frame = best_frames
     R, t = best_R_t
+    """
+    i, j = 140, 175
+    first_frame, second_frame = i, j
+    correspondences = build_correspondences(corner_storage[i], corner_storage[j])
+
+    homography_mat, mask_homography = cv2.findHomography(correspondences.points_1, correspondences.points_2,
+                                                         cv2.RANSAC, 4)
+    essential_mat, mask_essential = cv2.findEssentialMat(correspondences.points_1,
+                                                         correspondences.points_2,
+                                                         intrinsic_mat, cv2.RANSAC, 0.999, 1)
+
+    inliers_idx = np.arange(len(mask_essential))[(mask_essential.flatten() == 1) & (mask_homography.flatten() == 0)]
+
+    retval, R, t, mask = cv2.recoverPose(essential_mat, correspondences.points_1[inliers_idx],
+                                         correspondences.points_2[inliers_idx], intrinsic_mat)
+    """
     pose_first = view_mat3x4_to_pose(eye3x4())
     pose_second = Pose(R.T, R.T @ -t)
 
@@ -205,10 +228,10 @@ def get_initial_frames(corner_storage, intrinsic_mat):
     return (first_frame, pose_first), (second_frame, pose_second)
 
 
-REPROJECTION_ERROR = 0.1  # ошибка репроекции при получении 3d-3d соответствий
+REPROJECTION_ERROR = 0.5  # ошибка репроекции при получении 3d-3d соответствий
 MIN_TRIANGULATION_ANGLE = 2  # минимальный угол триангуляции
 MIN_DEPTH = 0
-PNP_ERROR = 2.5  # ошибка репроекции при решении задачи pnp
+PNP_ERROR = 3  # ошибка репроекции при решении задачи pnp
 MIN_INLIERS = 20  # минимальное количество инлайеров, которое нас устраивает для решения pnp
 MAX_RETRIANGL = 25  # максимальное количество точек, которое ретриангулируем
 
