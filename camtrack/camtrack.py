@@ -81,7 +81,7 @@ def choose_best_next_frame_and_solve_pnp(left_lim_1, right_lim_1, left_lim_2, ri
     interesting_frames = sorted(interesting_frames, key=lambda pair: pair[0])
 
     """?????"""
-    if (left_lim_1 > 0) and (right_lim_1 < left_lim_2 - 2):
+    if (left_lim_1 > 0) and (right_lim_1 < left_lim_2 - 1):
         if left_lim_1 > (left_lim_2 - right_lim_1):
             interesting_frames[0], interesting_frames[1] = interesting_frames[1], interesting_frames[0]
     """-----"""
@@ -437,9 +437,18 @@ def track_and_calc_colors(camera_parameters: CameraParameters,  # парамет
                                                  points2d_sequence=points2d_for_this_3d_point)  # получаем 3d-точку
                     found_3d_points.update_points(ids=np.array([known_3d_point]), points=new3d.reshape(1, 3))  # обновляем
                 count_retriang += 1
-
+        """
+        if num_iter % 10 == 0 and num_iter > 40:
+            # print('Frame {}: new points {}, total {}'.format(frame, delta, builder.points.shape[0]))
+            view_mats[-40:] = run_bundle_adjustment(
+                intrinsic_mat=intrinsic_mat,
+                list_of_corners=[corner_storage[i] for i in frame_with_found_cam[-40:]],
+                max_inlier_reprojection_error=REPROJECTION_ERROR,
+                views=view_mats[-40:],
+                pc_builder=found_3d_points)
 
         num_iter += 1
+        """
     """frame_count = len(corner_storage)
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count"""
     """corners_0 = corner_storage[0]"""
