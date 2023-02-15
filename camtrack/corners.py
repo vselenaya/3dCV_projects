@@ -48,7 +48,6 @@ class _CornerStorageBuilder:
 
 def _build_impl(frame_sequence: pims.FramesSequence,
                 builder: _CornerStorageBuilder) -> None:
-    # TODO
     """
     общие наблюдения:
     0) смысл этой функции состоит в том, чтобы на каждом изображении последовательности frame_sequence (эта

@@ -317,7 +317,7 @@ class PointCloudBuilder:
         self._points[idx_1] = points[idx_2]
 
     """мое: - то, что я дописал к исходному коду"""
-    def delete_points(self, ids: np.ndarray) -> None:
+    def delete_points(self, ids: np.ndarray) -> None:  # удаление 3d-точек из облака
         sorting_idx = np.argsort(ids.flatten())
         ids = ids[sorting_idx].reshape(-1, 1)
         _, (idx_remove, _) = snp.intersect(self.ids.flatten(), ids.flatten(), indices=True)

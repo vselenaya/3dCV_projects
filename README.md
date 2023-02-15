@@ -257,6 +257,20 @@ Volume under surface = 0.8719795735358125
 график красного цвета - это соответствующая ROC кривая (площадь, под которой
 посчитана в `AUC`).
 
+Примеры запсука:
+* `cmptrack.py -p ../dataset/room/ground_truth.yml ../dataset/room/track.txt
+`
+* `cmptrack.py -p ../dataset/house_free_motion/ground_truth.yml ../dataset/house_free_motion/track.txt
+`
+* `cmptrack.py -p ../dataset/fox_head_full/ground_truth.yml ../dataset/fox_head_full/track.txt
+`
+* `cmptrack.py -p ../dataset/bike_translation_slow/ground_truth.yml ../dataset/bike_translation_slow/track.txt
+`
+* `cmptrack.py -p ../dataset/soda_free_motion/ground_truth.yml ../dataset/soda_free_motion/track.txt
+`
+* `cmptrack.py -p ../dataset/fox_head_short/ground_truth.yml ../dataset/fox_head_short/track.txt
+`
+
 ### Мои комментарии:
 
 1) При запуске кода не забудьте установить библиотеки из `requirements.txt` - это
@@ -286,4 +300,12 @@ Volume under surface = 0.8719795735358125
 и на них получить положения камер), так как в ней довольно длинный перебор. Для длинных тестов
 эта часть может работать минут 20. Весь процесс трекинга выводится на экран, что
 упрощает понимание, на каком этапе программа сейчас.
+
+5) Комментарии в коде для опытного специалиста могут показаться излишними и очень
+громоздкими, но с моей точки зрения данная программа - это не столько код рабочего 
+инструмента для реальных задач, сколько практическое учебное пособие, в котором
+демонстрируется, как теоретические алгоритмы трёхмерного компьютерного зрения могут
+быть использованы на практике. А огромное количество подробных комментариев помогает
+освоить и понять новичку (в том числе и мне, если я забуду какой-то кусок 
+курса компьютерного зрения) что и как работает.
 

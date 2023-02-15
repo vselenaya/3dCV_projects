@@ -130,4 +130,3 @@ dmypy.json
 
 /dataset/
 .idea
-camtrack/__test_camtr.py
